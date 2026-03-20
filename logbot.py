@@ -304,16 +304,27 @@ async def log_kur(
     # Ayarı kaydet
     kanal_kaydet(interaction.guild_id, tur.value, kanal.id)
 
-    embed = discord.Embed(
+    # ── Sana özel onay mesajı (sadece sen görürsün) ──
+    onay_embed = discord.Embed(
         title="✅ Log Kanalı Ayarlandı",
         color=RENKLER["basari"],
         timestamp=datetime.now(timezone.utc)
     )
-    embed.add_field(name="📋 Log Türü", value=tur.name,      inline=True)
-    embed.add_field(name="📍 Kanal",    value=kanal.mention, inline=True)
-    embed.set_footer(text=f"Ayarlayan: {interaction.user} • {zaman_damgasi()}")
+    onay_embed.add_field(name="📋 Log Türü", value=tur.name,      inline=True)
+    onay_embed.add_field(name="📍 Kanal",    value=kanal.mention, inline=True)
+    onay_embed.set_footer(text=f"Ayarlayan: {interaction.user} • {zaman_damgasi()}")
+    await interaction.response.send_message(embed=onay_embed, ephemeral=True)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    # ── Log kanalına bilgilendirme mesajı ─────────────
+    kanal_embed = discord.Embed(
+        title="🔔 Log Kanalı Aktif",
+        description=f"Bu kanal **{tur.name}** için log kanalı olarak ayarlandı.\nArtık ilgili olaylar buraya düşecek.",
+        color=RENKLER["basari"],
+        timestamp=datetime.now(timezone.utc)
+    )
+    kanal_embed.add_field(name="⚙️ Ayarlayan", value=interaction.user.mention, inline=True)
+    kanal_embed.set_footer(text=zaman_damgasi())
+    await kanal.send(embed=kanal_embed)
 
 
 @bot.tree.command(name="log-kaldir", description="Bir log türünü devre dışı bırakır")
@@ -952,6 +963,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 Thread(target=run_flask).start()
+
 
 # ─────────────────────────────────────────
 #  BOTU BAŞLAT
