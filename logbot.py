@@ -29,7 +29,7 @@ from threading import Thread
 #  AYARLAR
 # ─────────────────────────────────────────
 
-   # Bot tokenınızı buraya girin
+BOT_TOKEN    = "BOT_TOKEN_BURAYA"   # Bot tokenınızı buraya girin
 AYAR_DOSYASI = "settings.json"      # Kanal ID'leri burada saklanır
 
 # Desteklenen log türleri ve açıklamaları
@@ -514,90 +514,6 @@ async def on_member_remove(member: discord.Member):
 
 
 # ─────────────────────────────────────────
-#  OLAYLAR — ÜYEYİ ROL EKLEME / ÇIKARMA
-# ─────────────────────────────────────────
-
-@bot.event
-async def on_member_update(onceki: discord.Member, sonraki: discord.Member):
-    """
-    Bir üyenin bilgileri değiştiğinde tetiklenir.
-    Burada yalnızca rol değişikliklerini (ekleme/çıkarma) yakalıyoruz.
-
-    Mantık:
-        - onceki.roles ile sonraki.roles listelerini karşılaştırıyoruz.
-        - Farka göre hangi rollerin eklendiğini veya çıkarıldığını tespit ediyoruz.
-        - Audit log'dan işlemi yapan kişiyi buluyoruz.
-    """
-
-    # Rol listelerini set'e çevir (karşılaştırmak için)
-    eski_roller = set(onceki.roles)
-    yeni_roller = set(sonraki.roles)
-
-    eklenen_roller   = yeni_roller - eski_roller   # Yeni listede olup eskide olmayan
-    cikarilan_roller = eski_roller - yeni_roller   # Eski listede olup yenide olmayan
-
-    # Rol değişikliği yoksa başka bir member_update (nick vb.) — atla
-    if not eklenen_roller and not cikarilan_roller:
-        return
-
-    # Audit log'dan işlemi yapan kişiyi bul
-    await asyncio.sleep(0.5)
-    sorumlu = await audit_log_bul(sonraki.guild, discord.AuditLogAction.member_role_update, hedef=sonraki)
-
-    # ── Rol Eklendi ──────────────────────────────────────────
-    if eklenen_roller:
-        embed = discord.Embed(
-            title="🟢 Üyeye Rol Eklendi",
-            color=RENKLER["giris"],
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.add_field(
-            name="👤 Üye",
-            value=f"{sonraki.mention} `{sonraki}`",
-            inline=True
-        )
-        embed.add_field(
-            name="🛡️ İşlemi Yapan",
-            value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor",
-            inline=True
-        )
-        embed.add_field(
-            name=f"➕ Eklenen Rol{'ler' if len(eklenen_roller) > 1 else ''}",
-            value="\n".join(r.mention for r in eklenen_roller),
-            inline=False
-        )
-        embed.set_thumbnail(url=sonraki.display_avatar.url)
-        embed.set_footer(text=zaman_damgasi())
-        await log_gonder(sonraki.guild, "rol_log", embed)
-
-    # ── Rol Çıkarıldı ────────────────────────────────────────
-    if cikarilan_roller:
-        embed = discord.Embed(
-            title="🔴 Üyeden Rol Çıkarıldı",
-            color=RENKLER["cikis"],
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.add_field(
-            name="👤 Üye",
-            value=f"{sonraki.mention} `{sonraki}`",
-            inline=True
-        )
-        embed.add_field(
-            name="🛡️ İşlemi Yapan",
-            value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor",
-            inline=True
-        )
-        embed.add_field(
-            name=f"➖ Çıkarılan Rol{'ler' if len(cikarilan_roller) > 1 else ''}",
-            value="\n".join(r.mention for r in cikarilan_roller),
-            inline=False
-        )
-        embed.set_thumbnail(url=sonraki.display_avatar.url)
-        embed.set_footer(text=zaman_damgasi())
-        await log_gonder(sonraki.guild, "rol_log", embed)
-
-
-# ─────────────────────────────────────────
 #  OLAYLAR — ROL İZİN DEĞİŞİKLİĞİ LOGU
 # ─────────────────────────────────────────
 
@@ -752,6 +668,247 @@ async def on_voice_state_update(member: discord.Member, onceki: discord.VoiceSta
 
 
 # ─────────────────────────────────────────
+#  OLAYLAR — TIMEOUT (ZAMAN ASIMI) LOGU
+# ─────────────────────────────────────────
+
+@bot.event
+async def on_member_update(onceki: discord.Member, sonraki: discord.Member):
+    """
+    Bu event hem rol değişikliklerini hem de timeout değişikliklerini yakalar.
+    İkisini birden burada handle ediyoruz.
+
+    NOT: Rol değişikliği için yukarıda ayrı bir on_member_update var,
+    ama discord.py'de aynı event'i iki kez tanımlayamazsınız.
+    Bu yüzden rol + timeout kontrolü tek fonksiyonda birleştirildi.
+    Eğer önceki on_member_update varsa onu SİLİP bununla DEĞİŞTİRİN.
+    """
+
+    # ── Timeout (Zaman Aşımı) Kontrolü ──────────────────────
+    # timed_out_until: None ise timeout yok, datetime ise aktif timeout
+    eski_timeout = onceki.timed_out_until
+    yeni_timeout = sonraki.timed_out_until
+
+    if eski_timeout != yeni_timeout:
+        await asyncio.sleep(0.5)
+        sorumlu = await audit_log_bul(sonraki.guild, discord.AuditLogAction.member_update, hedef=sonraki)
+
+        if yeni_timeout is not None:
+            # Timeout uygulandı
+            bitis = yeni_timeout.strftime("%d.%m.%Y %H:%M UTC")
+            embed = discord.Embed(
+                title="🔇 Zaman Aşımı Uygulandı (Timeout)",
+                color=RENKLER["mute"],
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="👤 Üye",            value=f"{sonraki.mention} `{sonraki}`",                inline=True)
+            embed.add_field(name="🛡️ İşlemi Yapan",   value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor", inline=True)
+            embed.add_field(name="⏰ Bitiş Zamanı",   value=f"`{bitis}`",                                    inline=False)
+            embed.set_thumbnail(url=sonraki.display_avatar.url)
+            embed.set_footer(text=zaman_damgasi())
+            await log_gonder(sonraki.guild, "mute_log", embed)
+
+        else:
+            # Timeout kaldırıldı (erken veya süre doldu)
+            embed = discord.Embed(
+                title="🔊 Zaman Aşımı Kaldırıldı",
+                color=RENKLER["unban"],
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="👤 Üye",           value=f"{sonraki.mention} `{sonraki}`",                inline=True)
+            embed.add_field(name="🛡️ İşlemi Yapan",  value=sorumlu.mention if sorumlu else "⚠️ Otomatik",  inline=True)
+            embed.set_thumbnail(url=sonraki.display_avatar.url)
+            embed.set_footer(text=zaman_damgasi())
+            await log_gonder(sonraki.guild, "mute_log", embed)
+
+    # ── Rol Değişikliği Kontrolü ─────────────────────────────
+    eski_roller = set(onceki.roles)
+    yeni_roller = set(sonraki.roles)
+
+    eklenen_roller   = yeni_roller - eski_roller
+    cikarilan_roller = eski_roller - yeni_roller
+
+    if not eklenen_roller and not cikarilan_roller:
+        return
+
+    await asyncio.sleep(0.5)
+    sorumlu = await audit_log_bul(sonraki.guild, discord.AuditLogAction.member_role_update, hedef=sonraki)
+
+    if eklenen_roller:
+        embed = discord.Embed(title="🟢 Üyeye Rol Eklendi", color=RENKLER["giris"], timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 Üye",           value=f"{sonraki.mention} `{sonraki}`",                inline=True)
+        embed.add_field(name="🛡️ İşlemi Yapan",  value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor", inline=True)
+        embed.add_field(
+            name=f"➕ Eklenen Rol{'ler' if len(eklenen_roller) > 1 else ''}",
+            value="\n".join(r.mention for r in eklenen_roller),
+            inline=False
+        )
+        embed.set_thumbnail(url=sonraki.display_avatar.url)
+        embed.set_footer(text=zaman_damgasi())
+        await log_gonder(sonraki.guild, "rol_log", embed)
+
+    if cikarilan_roller:
+        embed = discord.Embed(title="🔴 Üyeden Rol Çıkarıldı", color=RENKLER["cikis"], timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="👤 Üye",           value=f"{sonraki.mention} `{sonraki}`",                inline=True)
+        embed.add_field(name="🛡️ İşlemi Yapan",  value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor", inline=True)
+        embed.add_field(
+            name=f"➖ Çıkarılan Rol{'ler' if len(cikarilan_roller) > 1 else ''}",
+            value="\n".join(r.mention for r in cikarilan_roller),
+            inline=False
+        )
+        embed.set_thumbnail(url=sonraki.display_avatar.url)
+        embed.set_footer(text=zaman_damgasi())
+        await log_gonder(sonraki.guild, "rol_log", embed)
+
+
+# ─────────────────────────────────────────
+#  OLAYLAR — DAVETİYE LOGLARI
+# ─────────────────────────────────────────
+
+@bot.event
+async def on_invite_create(invite: discord.Invite):
+    """Yeni bir davet bağlantısı oluşturulduğunda tetiklenir."""
+    embed = discord.Embed(
+        title="✉️ Yeni Davet Oluşturuldu",
+        color=RENKLER["bilgi"],
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="👤 Oluşturan",   value=invite.inviter.mention if invite.inviter else "Bilinmiyor", inline=True)
+    embed.add_field(name="📍 Kanal",        value=invite.channel.mention if invite.channel else "—",         inline=True)
+    embed.add_field(name="🔗 Davet Kodu",   value=f"`{invite.code}`",                                        inline=True)
+
+    # Kullanım limiti: 0 = sınırsız
+    kullanim = str(invite.max_uses) if invite.max_uses else "Sınırsız"
+    embed.add_field(name="🔢 Kullanım Limiti", value=kullanim, inline=True)
+
+    # Süre: 0 = hiç dolmaz
+    if invite.max_age:
+        sure = f"{invite.max_age // 3600} saat" if invite.max_age >= 3600 else f"{invite.max_age // 60} dakika"
+    else:
+        sure = "Süresiz"
+    embed.add_field(name="⏳ Geçerlilik",   value=sure,    inline=True)
+    embed.add_field(name="🌐 URL",          value=f"discord.gg/{invite.code}", inline=True)
+
+    embed.set_footer(text=zaman_damgasi())
+    await log_gonder(invite.guild, "davet_log", embed)
+
+
+@bot.event
+async def on_invite_delete(invite: discord.Invite):
+    """Bir davet bağlantısı silindiğinde tetiklenir."""
+    embed = discord.Embed(
+        title="🗑️ Davet Silindi",
+        color=RENKLER["hata"],
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="🔗 Davet Kodu", value=f"`{invite.code}`",                                        inline=True)
+    embed.add_field(name="📍 Kanal",       value=invite.channel.mention if invite.channel else "—",         inline=True)
+    embed.set_footer(text=zaman_damgasi())
+    await log_gonder(invite.guild, "davet_log", embed)
+
+
+# ─────────────────────────────────────────
+#  OLAYLAR — KANAL LOGLARI
+# ─────────────────────────────────────────
+
+@bot.event
+async def on_guild_channel_create(kanal: discord.abc.GuildChannel):
+    """Yeni bir kanal oluşturulduğunda tetiklenir."""
+    sorumlu = await audit_log_bul(kanal.guild, discord.AuditLogAction.channel_create, hedef=kanal)
+
+    # Kanal türünü belirle
+    tur_simge = {
+        discord.TextChannel:     "💬 Metin Kanalı",
+        discord.VoiceChannel:    "🔊 Ses Kanalı",
+        discord.CategoryChannel: "📁 Kategori",
+        discord.ForumChannel:    "📋 Forum Kanalı",
+        discord.StageChannel:    "🎙️ Sahne Kanalı",
+    }.get(type(kanal), "📌 Kanal")
+
+    embed = discord.Embed(
+        title="✅ Kanal Oluşturuldu",
+        color=RENKLER["giris"],
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="📍 Kanal",        value=f"{kanal.mention} `{kanal.name}`",                        inline=True)
+    embed.add_field(name="📂 Tür",           value=tur_simge,                                               inline=True)
+    embed.add_field(name="🛡️ İşlemi Yapan", value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor",          inline=True)
+    embed.add_field(name="🆔 Kanal ID",     value=f"`{kanal.id}`",                                          inline=True)
+
+    # Kategorisi varsa göster
+    if hasattr(kanal, "category") and kanal.category:
+        embed.add_field(name="📁 Kategori", value=kanal.category.name, inline=True)
+
+    embed.set_footer(text=zaman_damgasi())
+    await log_gonder(kanal.guild, "kanal_log", embed)
+
+
+@bot.event
+async def on_guild_channel_delete(kanal: discord.abc.GuildChannel):
+    """Bir kanal silindiğinde tetiklenir."""
+    sorumlu = await audit_log_bul(kanal.guild, discord.AuditLogAction.channel_delete, hedef=kanal)
+
+    tur_simge = {
+        discord.TextChannel:     "💬 Metin Kanalı",
+        discord.VoiceChannel:    "🔊 Ses Kanalı",
+        discord.CategoryChannel: "📁 Kategori",
+        discord.ForumChannel:    "📋 Forum Kanalı",
+        discord.StageChannel:    "🎙️ Sahne Kanalı",
+    }.get(type(kanal), "📌 Kanal")
+
+    embed = discord.Embed(
+        title="🗑️ Kanal Silindi",
+        color=RENKLER["hata"],
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="📍 Kanal Adı",    value=f"`{kanal.name}`",                                        inline=True)
+    embed.add_field(name="📂 Tür",           value=tur_simge,                                               inline=True)
+    embed.add_field(name="🛡️ İşlemi Yapan", value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor",          inline=True)
+    embed.add_field(name="🆔 Kanal ID",     value=f"`{kanal.id}`",                                          inline=True)
+
+    if hasattr(kanal, "category") and kanal.category:
+        embed.add_field(name="📁 Kategori", value=kanal.category.name, inline=True)
+
+    embed.set_footer(text=zaman_damgasi())
+    await log_gonder(kanal.guild, "kanal_log", embed)
+
+
+@bot.event
+async def on_guild_channel_update(onceki: discord.abc.GuildChannel, sonraki: discord.abc.GuildChannel):
+    """Bir kanalın adı veya ayarları değiştiğinde tetiklenir."""
+    degisiklikler = []
+
+    if onceki.name != sonraki.name:
+        degisiklikler.append(f"📝 İsim: `{onceki.name}` → `{sonraki.name}`")
+
+    # Metin kanalına özel: topic değişikliği
+    if isinstance(onceki, discord.TextChannel) and isinstance(sonraki, discord.TextChannel):
+        if onceki.topic != sonraki.topic:
+            eski = onceki.topic or "*(boş)*"
+            yeni = sonraki.topic or "*(boş)*"
+            degisiklikler.append(f"📋 Konu: `{eski}` → `{yeni}`")
+        if onceki.slowmode_delay != sonraki.slowmode_delay:
+            degisiklikler.append(f"🐢 Yavaş Mod: `{onceki.slowmode_delay}sn` → `{sonraki.slowmode_delay}sn`")
+        if onceki.nsfw != sonraki.nsfw:
+            degisiklikler.append(f"🔞 NSFW: `{onceki.nsfw}` → `{sonraki.nsfw}`")
+
+    if not degisiklikler:
+        return  # Önemli bir değişiklik yok
+
+    sorumlu = await audit_log_bul(sonraki.guild, discord.AuditLogAction.channel_update, hedef=sonraki)
+
+    embed = discord.Embed(
+        title="✏️ Kanal Güncellendi",
+        color=RENKLER["bilgi"],
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="📍 Kanal",         value=sonraki.mention,                                          inline=True)
+    embed.add_field(name="🛡️ İşlemi Yapan",  value=sorumlu.mention if sorumlu else "⚠️ Bilinmiyor",          inline=True)
+    embed.add_field(name="🔄 Değişiklikler", value="\n".join(degisiklikler),                                  inline=False)
+    embed.set_footer(text=zaman_damgasi())
+    await log_gonder(sonraki.guild, "kanal_log", embed)
+
+
+# ─────────────────────────────────────────
 #  BOT HAZIR OLAYI
 # ─────────────────────────────────────────
 
@@ -783,7 +940,6 @@ async def on_ready():
         )
     )
 
-    
 # ================= FLASK (REPLIT PREVIEW İÇİN) =================
 app = Flask(__name__)
 
@@ -797,10 +953,9 @@ def run_flask():
 
 Thread(target=run_flask).start()
 
-
 # ─────────────────────────────────────────
 #  BOTU BAŞLAT
 # ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    bot.run(BOT_TOKEN)
